@@ -5,19 +5,45 @@ import torch
 from urllib.request import urlopen
 import base64
 import io
-from typing import Iterator
+from typing import Iterator, Tuple
 from threading import Thread
 from transformers import TextIteratorStreamer
 import time
 
-model_path = "/mnt/data/models/moonshotai/Kimi-VL-A3B-Instruct"
-model = AutoModelForCausalLM.from_pretrained(
-    model_path,
-    torch_dtype="auto",
-    device_map="auto",
-    trust_remote_code=True,
-)
-processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+model = None
+processor = None
+
+def initialize_model(model_path: str):
+    global model, processor
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype="auto",
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+    
+
+def extract_image_and_text(messages: list) -> Tuple[str, str]:
+    text_prompt = ""
+    image_url = None
+    
+    for msg in messages:
+        if msg.get("role") == "user" and "content" in msg:
+            content = msg["content"]
+            if isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "image_url":
+                        image_url = item.get("image_url", {}).get("url")
+                    elif item.get("type") == "text":
+                        text_prompt += item.get("text", "") + " "
+            elif isinstance(content, str):
+                text_prompt += content + " "
+    
+    if not image_url:
+        raise ValueError("No image URL found in messages")
+        
+    return image_url, text_prompt.strip() or "What is in this image?"
 
 def process_vl_request(image_path_or_url: str, text_prompt: str):
     try:

@@ -6,19 +6,22 @@ import torch
 from typing import List, Optional
 from pydantic import BaseModel
 
-# # Model loading (should be done at startup)
-# model_path = "Dream-org/Dream-v0-Instruct-7B"
-# device = "cuda" if torch.cuda.is_available() else "cpu"
+model = None
+tokenizer = None
 
-# try:
-#     model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
-#     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-#     model = model.to(device).eval()
-# except Exception as e:
-#     raise RuntimeError(f"Failed to load model: {str(e)}")
+def initialize_model(model_path: str):
+    global model, tokenizer
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    try:
+        model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        model = model.to(device).eval()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model: {str(e)}")
 
 class ChatMessage(BaseModel):
-    role: str  # "system", "user", or "assistant"
+    role: str
     content: str
 
 class ChatCompletionRequest(BaseModel):
@@ -39,6 +42,9 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
 
 def generate_chat_response(request):
+    if isinstance(request, dict):
+        request = ChatCompletionRequest(**request)
+        
     try:
         # Prepare input
         inputs = tokenizer.apply_chat_template(
@@ -47,8 +53,8 @@ def generate_chat_response(request):
             return_dict=True,
             add_generation_prompt=True
         )
-        input_ids = inputs.input_ids.to(device=device)
-        attention_mask = inputs.attention_mask.to(device=device)
+        input_ids = inputs.input_ids.to(device=model.device)
+        attention_mask = inputs.attention_mask.to(device=model.device)
 
         # Generate response
         output = model.diffusion_generate(
