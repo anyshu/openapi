@@ -1,95 +1,63 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import torch
-from transformers import AutoModel, AutoTokenizer
+from fastapi import FastAPI, UploadFile, File, Form
 from typing import List, Optional
-import time
+from pydantic import BaseModel
+from dream_service import generate_chat_response, ChatMessage, ChatCompletionRequest
+from kimi_vl_service import process_vl_request
 
 app = FastAPI()
 
-# Model loading (should be done at startup)
-model_path = "Dream-org/Dream-v0-Instruct-7B"
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-try:
-    model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = model.to(device).eval()
-except Exception as e:
-    raise RuntimeError(f"Failed to load model: {str(e)}")
-
-# Request/Response models
-class ChatMessage(BaseModel):
-    role: str  # "system", "user", or "assistant"
-    content: str
-
-class ChatCompletionRequest(BaseModel):
+class VLCompletionRequest(BaseModel):
     messages: List[ChatMessage]
+    image: UploadFile
     max_tokens: Optional[int] = 512
     temperature: Optional[float] = 0.2
     top_p: Optional[float] = 0.95
 
-class ChatCompletionChoice(BaseModel):
-    index: int
-    message: ChatMessage
-    finish_reason: str
-
-class ChatCompletionResponse(BaseModel):
-    id: str
-    object: str = "chat.completion"
-    created: int
-    choices: List[ChatCompletionChoice]
-
 @app.post("/v1/chat/completions")
-async def chat_completion(request: ChatCompletionRequest):
-    try:
-        # Prepare input
-        inputs = tokenizer.apply_chat_template(
-            [msg.dict() for msg in request.messages],
-            return_tensors="pt",
-            return_dict=True,
-            add_generation_prompt=True
+async def chat_completion(request: dict = None, image_url: Optional[str] = Form(None), image: Optional[UploadFile] = File(None)):
+    # Handle vision/language requests with images
+    if image_url or image:
+        file_location_or_url = None
+        if image_url:
+            file_location_or_url = image_url
+        elif image:
+            file_location = f"/tmp/{image.filename}"
+            with open(file_location, "wb") as f:
+                f.write(image.file.read())
+            file_location_or_url = file_location
+            
+        # Extract text from messages
+        text_prompt = ""
+        if request and "messages" in request:
+            for msg in request["messages"]:
+                if msg["role"] == "user" and "content" in msg:
+                    if isinstance(msg["content"], str):
+                        text_prompt += msg["content"] + " "
+                    elif isinstance(msg["content"], list):
+                        for content_item in msg["content"]:
+                            if content_item.get("type") == "text":
+                                text_prompt += content_item.get("text", "") + " "
+        
+        return process_vl_request(file_location_or_url, text_prompt)
+    
+    # Handle regular text-only chat requests
+    if isinstance(request, dict):
+        # Convert dict to ChatCompletionRequest
+        messages = []
+        for msg in request.get("messages", []):
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append(ChatMessage(role=msg["role"], content=msg["content"]))
+        
+        chat_request = ChatCompletionRequest(
+            messages=messages,
+            max_tokens=request.get("max_tokens", 512),
+            temperature=request.get("temperature", 0.2),
+            top_p=request.get("top_p", 0.95)
         )
-        input_ids = inputs.input_ids.to(device=device)
-        attention_mask = inputs.attention_mask.to(device=device)
-
-        # Generate response
-        output = model.diffusion_generate(
-            input_ids,
-            attention_mask=attention_mask,
-            max_new_tokens=request.max_tokens,
-            output_history=True,
-            return_dict_in_generate=True,
-            steps=request.max_tokens,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            alg="entropy",
-            alg_temp=0.,
-        )
-
-        # Decode response
-        generations = [
-            tokenizer.decode(g[len(p):].tolist())
-            for p, g in zip(input_ids, output.sequences)
-        ]
-        content = generations[0].split(tokenizer.eos_token)[0]
-
-        # Prepare response
-        response_message = ChatMessage(role="assistant", content=content)
-        choice = ChatCompletionChoice(
-            index=0,
-            message=response_message,
-            finish_reason="length" if len(content) >= request.max_tokens else "stop"
-        )
-
-        return ChatCompletionResponse(
-            id="chatcmpl-" + str(hash(content)),
-            created=int(time.time()),
-            choices=[choice]
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return generate_chat_response(chat_request)
+    
+    # If request is already a ChatCompletionRequest object
+    return generate_chat_response(request)
 
 if __name__ == "__main__":
     import uvicorn
