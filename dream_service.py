@@ -6,16 +6,16 @@ import torch
 from typing import List, Optional
 from pydantic import BaseModel
 
-# Model loading (should be done at startup)
-model_path = "Dream-org/Dream-v0-Instruct-7B"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# # Model loading (should be done at startup)
+# model_path = "Dream-org/Dream-v0-Instruct-7B"
+# device = "cuda" if torch.cuda.is_available() else "cpu"
 
-try:
-    model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = model.to(device).eval()
-except Exception as e:
-    raise RuntimeError(f"Failed to load model: {str(e)}")
+# try:
+#     model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+#     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+#     model = model.to(device).eval()
+# except Exception as e:
+#     raise RuntimeError(f"Failed to load model: {str(e)}")
 
 class ChatMessage(BaseModel):
     role: str  # "system", "user", or "assistant"
