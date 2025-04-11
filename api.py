@@ -7,21 +7,25 @@ import json
 import asyncio
 import argparse
 import importlib
+import os
 from model_config import MODEL_CONFIGS, get_handler_for_model
 
 app = FastAPI()
 loaded_models = {}
 
-def load_model_handler(model_name: str):
-    """根据模型名称加载对应的处理器"""
+def load_model_handler(model_path: str, model_name: str = None):
+    """根据模型路径和名称加载对应的处理器"""
     try:
+        if model_name is None:
+            model_name = os.path.basename(model_path)
+        
         handler_name = get_handler_for_model(model_name)
         handler_module = importlib.import_module(handler_name)
-        handler_module.initialize_model(model_name)
+        handler_module.initialize_model(model_path)
         loaded_models[model_name] = handler_module
         return model_name
     except Exception as e:
-        raise RuntimeError(f"Failed to load model {model_name}: {str(e)}")
+        raise RuntimeError(f"Failed to load model: {str(e)}")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
@@ -122,11 +126,12 @@ async def chat_completion(request: dict = Body(...)):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True, help="Model name")
+    parser.add_argument("--model-path", required=True, help="Path to the model")
+    parser.add_argument("--model-name", help="Model name (optional, defaults to path basename)")
     args = parser.parse_args()
     
-    model_name = load_model_handler(args.model)
-    print(f"Loaded model {model_name}")
+    model_name = load_model_handler(args.model_path, args.model_name)
+    print(f"Loaded model {model_name} from {args.model_path}")
     
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=12200)
