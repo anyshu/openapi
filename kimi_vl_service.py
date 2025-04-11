@@ -49,13 +49,27 @@ def preallocate_memory(batch_size: int, max_seq_len: int):
         "attention_mask": torch.zeros((batch_size, max_seq_len), dtype=torch.long, device="cuda"),
     }
 
+# Preallocate large memory blocks to maximize GPU memory usage
+def preallocate_large_memory():
+    global large_memory_blocks
+    large_memory_blocks = []
+    try:
+        # Allocate large tensors to occupy GPU memory
+        for _ in range(10):  # Adjust the number of blocks as needed
+            block = torch.empty((1024, 1024, 1024), dtype=torch.float16, device="cuda")
+            large_memory_blocks.append(block)
+    except RuntimeError:
+        # If memory allocation fails, release the last block and stop
+        large_memory_blocks.pop()
+        torch.cuda.empty_cache()
+
 def initialize_model(model_path: str):
     global model, processor
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype="auto",
         device_map="auto",  # Automatically map layers to available GPUs
-        max_memory={i: "70GB" for i in range(torch.cuda.device_count())},  # Limit GPU memory usage
+        max_memory={i: "80GB" for i in range(torch.cuda.device_count())},  # Maximize GPU memory usage
         trust_remote_code=True,
     )
     # Compile the model for optimized inference (requires PyTorch 2.0+)
@@ -63,6 +77,8 @@ def initialize_model(model_path: str):
     processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     # Preallocate memory for batch processing
     preallocate_memory(batch_size=16, max_seq_len=512)
+    # Preallocate large memory blocks to occupy GPU memory
+    preallocate_large_memory()
 
 def extract_image_and_text(messages: list) -> Tuple[str, str]:
     text_prompt = ""
