@@ -7,7 +7,7 @@ import json
 import asyncio
 import argparse
 import importlib
-from model_config import MODEL_CONFIGS, get_handler_by_name
+from model_config import MODEL_CONFIGS, get_handler_for_model
 
 app = FastAPI()
 loaded_models = {}
@@ -15,7 +15,7 @@ loaded_models = {}
 def load_model_handler(model_name: str):
     """根据模型名称加载对应的处理器"""
     try:
-        handler_name = get_handler_by_name(model_name)
+        handler_name = get_handler_for_model(model_name)
         handler_module = importlib.import_module(handler_name)
         handler_module.initialize_model(model_name)
         loaded_models[model_name] = handler_module
