@@ -5,7 +5,7 @@
 ## 支持的模型
 
 目前支持以下模型：
-- THUDM/GLM-4
+- THUDM/GLM-Z1-32B-0414
 - Kimi Vision Language Model
 - DREAM
 
@@ -31,7 +31,7 @@ python api.py --model-path "<model-path>" --model-name "<model-name>"
 
 例如，启动 GLM-4 模型：
 ```bash
-python api.py --model-path "THUDM/GLM-4-Z1-32B-0414" --model-name "glm-4"
+python api.py --model-path "THUDM/GLM-Z1-32B-0414" --model-name "GLM-Z1-32B-0414"
 ```
 
 2. 发送请求：
@@ -42,7 +42,7 @@ python api.py --model-path "THUDM/GLM-4-Z1-32B-0414" --model-name "glm-4"
 curl http://localhost:12200/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "glm-4",
+    "model": "GLM-Z1-32B-0414",
     "messages": [
       {"role": "user", "content": "你好，请介绍一下你自己"}
     ]
