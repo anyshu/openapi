@@ -1,7 +1,8 @@
 MODEL_CONFIGS = {
     "kimi-vl": "kimi_vl_service",
     "dream": "dream_service",
-    "GLM-Z1-32B-0414": "glm4_handler"
+    "GLM-Z1-32B-0414": "glm4_handler",
+    "google/gemma-3n-e4b-it": "gemma3n_handler"
 }
 
 def get_handler_for_model(model_path: str) -> str:
