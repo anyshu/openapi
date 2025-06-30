@@ -122,7 +122,7 @@ def generate_chat_response(request: dict) -> dict:
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": "google/gemma-3n-e4b-it",
+            "model": request["model"],
             "choices": [{
                 "index": 0,
                 "message": {
@@ -185,7 +185,7 @@ def generate_stream_response(request: dict):
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
-                "model": "google/gemma-3n-e4b-it",
+                "model": request["model"],
                 "choices": [{
                     "index": 0,
                     "delta": {
@@ -201,7 +201,7 @@ def generate_stream_response(request: dict):
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
             "created": int(time.time()),
-            "model": "google/gemma-3n-e4b-it",
+            "model": request["model"],
             "choices": [{
                 "index": 0,
                 "delta": {},
