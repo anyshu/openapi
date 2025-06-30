@@ -5,6 +5,9 @@ from PIL import Image
 import io
 import base64
 
+# 启用 TF32 以获得更好的性能（适用于 Ampere 架构 GPU）
+torch.set_float32_matmul_precision('high')
+
 model = None
 processor = None
 
