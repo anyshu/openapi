@@ -15,7 +15,7 @@ def get_handler_for_model(model_path: str) -> str:
 
 def get_handler_by_name(model_name: str) -> str:
     """根据模型名称返回对应的处理器名称"""
-    model_name = model_name.lower()
+    # model_name = model_name.lower()
     if model_name in MODEL_CONFIGS:
         return MODEL_CONFIGS[model_name]
     raise ValueError(f"No handler found for model: {model_name}")
