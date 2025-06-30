@@ -1,4 +1,4 @@
-from transformers import AutoTokenizer, AutoProcessor, Gemma3ForConditionalGeneration
+from transformers import AutoProcessor, Gemma3nForConditionalGeneration
 import torch
 import time
 from PIL import Image
@@ -6,33 +6,25 @@ import io
 import base64
 
 model = None
-tokenizer = None
 processor = None
 
 def initialize_model(model_path: str):
     """初始化 Google Gemma 3n 多模态模型"""
-    global model, tokenizer, processor
+    global model, processor
     try:
-        # 加载 tokenizer 和 processor
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
-        
+        # 加载 processor
         processor = AutoProcessor.from_pretrained(
             model_path,
             trust_remote_code=True
         )
         
         # 加载 Gemma 3n 条件生成模型
-        model = Gemma3ForConditionalGeneration.from_pretrained(
+        model = Gemma3nForConditionalGeneration.from_pretrained(
             model_path,
             device_map="auto",
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
-            # Gemma 3n 特定配置
-            low_cpu_mem_usage=True,
-        )
+        ).eval()
         
         print(f"成功加载 Gemma 3n 模型: {model_path}")
         print(f"模型架构: {model.config.model_type}")
@@ -41,23 +33,50 @@ def initialize_model(model_path: str):
     except Exception as e:
         raise RuntimeError(f"加载 Gemma 3n 模型失败: {str(e)}")
 
-def process_image_content(content_item):
-    """处理图像内容"""
-    if content_item.get("type") == "image_url":
-        image_url = content_item["image_url"]["url"]
+def convert_openai_to_gemma3n_format(messages):
+    """将 OpenAI 格式的消息转换为 Gemma 3n 格式"""
+    converted_messages = []
+    
+    for message in messages:
+        converted_message = {
+            "role": message["role"],
+            "content": []
+        }
         
-        # 如果是 base64 编码的图像
-        if image_url.startswith("data:image"):
-            # 提取 base64 数据
-            base64_data = image_url.split(",")[1]
-            image_data = base64.b64decode(base64_data)
-            image = Image.open(io.BytesIO(image_data))
-        else:
-            # 如果是 URL（这里简化处理，实际可能需要下载）
-            raise ValueError("暂不支持远程图像 URL，请使用 base64 编码的图像")
+        content = message.get("content", [])
+        if isinstance(content, str):
+            # 纯文本消息
+            converted_message["content"].append({
+                "type": "text", 
+                "text": content
+            })
+        elif isinstance(content, list):
+            # 多模态消息
+            for item in content:
+                if item.get("type") == "text":
+                    converted_message["content"].append({
+                        "type": "text",
+                        "text": item["text"]
+                    })
+                elif item.get("type") == "image_url":
+                    image_url = item["image_url"]["url"]
+                    
+                    # 处理 base64 编码的图像
+                    if image_url.startswith("data:image"):
+                        base64_data = image_url.split(",")[1]
+                        image_data = base64.b64decode(base64_data)
+                        image = Image.open(io.BytesIO(image_data))
+                        
+                        converted_message["content"].append({
+                            "type": "image",
+                            "image": image
+                        })
+                    else:
+                        raise ValueError("暂不支持远程图像 URL，请使用 base64 编码的图像")
         
-        return image
-    return None
+        converted_messages.append(converted_message)
+    
+    return converted_messages
 
 def generate_chat_response(request: dict) -> dict:
     """生成聊天响应（支持多模态输入）"""
@@ -66,66 +85,35 @@ def generate_chat_response(request: dict) -> dict:
         max_tokens = request.get("max_tokens", 1024)
         temperature = request.get("temperature", 0.7)
         top_p = request.get("top_p", 0.9)
+        do_sample = temperature > 0
         
-        # 处理多模态消息
-        text_content = []
-        images = []
+        # 转换消息格式
+        converted_messages = convert_openai_to_gemma3n_format(messages)
         
-        for message in messages:
-            if message["role"] in ["user", "assistant"]:
-                content = message.get("content", [])
-                if isinstance(content, str):
-                    text_content.append(f"{message['role']}: {content}")
-                elif isinstance(content, list):
-                    for item in content:
-                        if item.get("type") == "text":
-                            text_content.append(f"{message['role']}: {item['text']}")
-                        elif item.get("type") == "image_url":
-                            image = process_image_content(item)
-                            if image is not None:
-                                images.append(image)
+        # 使用 processor 应用聊天模板
+        inputs = processor.apply_chat_template(
+            converted_messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(model.device)
         
-        # 构建输入文本
-        conversation_text = "\n".join(text_content)
-        
-        # 使用 processor 处理多模态输入
-        if images:
-            # 多模态输入（文本 + 图像）
-            inputs = processor(
-                text=conversation_text,
-                images=images,
-                return_tensors="pt",
-                padding=True
-            ).to(model.device)
-        else:
-            # 纯文本输入
-            inputs = processor(
-                text=conversation_text,
-                return_tensors="pt",
-                padding=True
-            ).to(model.device)
-        
-        # 生成配置
-        generation_config = {
-            "max_new_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-            "do_sample": temperature > 0,
-            "pad_token_id": tokenizer.eos_token_id,
-            "eos_token_id": tokenizer.eos_token_id,
-        }
+        input_len = inputs["input_ids"].shape[-1]
         
         # 生成响应
-        with torch.no_grad():
-            outputs = model.generate(
+        with torch.inference_mode():
+            generation = model.generate(
                 **inputs,
-                **generation_config
+                max_new_tokens=max_tokens,
+                do_sample=do_sample,
+                temperature=temperature if do_sample else None,
+                top_p=top_p if do_sample else None,
             )
+            generation = generation[0][input_len:]
         
         # 解码响应
-        input_length = inputs["input_ids"].shape[1] if "input_ids" in inputs else 0
-        generated_tokens = outputs[0][input_length:]
-        response_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        response_text = processor.decode(generation, skip_special_tokens=True)
         
         return {
             "id": f"chatcmpl-{int(time.time())}",
@@ -141,9 +129,9 @@ def generate_chat_response(request: dict) -> dict:
                 "finish_reason": "stop"
             }],
             "usage": {
-                "prompt_tokens": input_length,
-                "completion_tokens": len(generated_tokens),
-                "total_tokens": input_length + len(generated_tokens)
+                "prompt_tokens": input_len,
+                "completion_tokens": len(generation),
+                "total_tokens": input_len + len(generation)
             }
         }
         
@@ -157,63 +145,35 @@ def generate_stream_response(request: dict):
         max_tokens = request.get("max_tokens", 1024)
         temperature = request.get("temperature", 0.7)
         top_p = request.get("top_p", 0.9)
+        do_sample = temperature > 0
         
-        # 处理多模态消息（与上面相同的逻辑）
-        text_content = []
-        images = []
+        # 转换消息格式
+        converted_messages = convert_openai_to_gemma3n_format(messages)
         
-        for message in messages:
-            if message["role"] in ["user", "assistant"]:
-                content = message.get("content", [])
-                if isinstance(content, str):
-                    text_content.append(f"{message['role']}: {content}")
-                elif isinstance(content, list):
-                    for item in content:
-                        if item.get("type") == "text":
-                            text_content.append(f"{message['role']}: {item['text']}")
-                        elif item.get("type") == "image_url":
-                            image = process_image_content(item)
-                            if image is not None:
-                                images.append(image)
+        # 使用 processor 应用聊天模板
+        inputs = processor.apply_chat_template(
+            converted_messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(model.device)
         
-        conversation_text = "\n".join(text_content)
+        input_len = inputs["input_ids"].shape[-1]
         
-        # 使用 processor 处理输入
-        if images:
-            inputs = processor(
-                text=conversation_text,
-                images=images,
-                return_tensors="pt",
-                padding=True
-            ).to(model.device)
-        else:
-            inputs = processor(
-                text=conversation_text,
-                return_tensors="pt",
-                padding=True
-            ).to(model.device)
-        
-        # 流式生成配置
-        generation_config = {
-            "max_new_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-            "do_sample": temperature > 0,
-            "pad_token_id": tokenizer.eos_token_id,
-            "eos_token_id": tokenizer.eos_token_id,
-        }
-        
-        # 生成并流式返回
-        input_length = inputs["input_ids"].shape[1] if "input_ids" in inputs else 0
-        
-        with torch.no_grad():
-            outputs = model.generate(
+        # 生成响应
+        with torch.inference_mode():
+            generation = model.generate(
                 **inputs,
-                **generation_config
+                max_new_tokens=max_tokens,
+                do_sample=do_sample,
+                temperature=temperature if do_sample else None,
+                top_p=top_p if do_sample else None,
             )
+            generation = generation[0][input_len:]
         
-        generated_tokens = outputs[0][input_length:]
-        response_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        # 解码响应
+        response_text = processor.decode(generation, skip_special_tokens=True)
         
         # 模拟流式返回
         words = response_text.split()
